@@ -2,7 +2,7 @@
 
 ## Run the program
 
-From the repository root:
+To run my program, open a terminal in the repository folder and use:
 
 ```sh
 cd Exc_1/solution
@@ -17,11 +17,12 @@ Name: Daniel Sander Gassner
 Course: Software Architectures for Big Data
 ```
 
-The module requires Go 1.22 or newer and has no external dependencies.
+The program needs Go 1.22 or newer. It only uses the standard library, so no
+extra packages are needed.
 
 ## Validation
 
-Checked with Go 1.27.2 on Windows:
+The program was checked with Go 1.27.2 on Windows:
 
 - Formatted with `gofmt`.
 - `go vet .` passed.
@@ -32,18 +33,19 @@ The installed swaggo module is v1.16.6; its CLI reports v1.16.4.
 
 ## How it works
 
-`Student` is a struct with two string fields, `Name` and `Course`. In `main`,
-a struct literal creates a student with values for both fields.
+I used a `Student` struct with two string fields: `Name` and `Course`.
+In `main`, I create a student with my name and the name of the course.
 
-`func (s Student) Print()` declares a method with a receiver of type `Student`.
-Calling `student.Print()` prints the greeting and every field of that struct.
-The receiver is passed by value, so the method works with a copy. A pointer
-receiver is unnecessary here because the method only reads the fields.
+The method `func (s Student) Print()` has a receiver of type `Student`.
+When I call `student.Print()`, it prints "Hello, world!" followed by the
+values of both fields. I used a value receiver because the method only reads
+the data. It works with a copy of the struct and does not change the original.
 
 ## Go Tour study notes
 
-The assigned reading is [A Tour of Go](https://go.dev/tour/basics/1), through
-[methods and interfaces, page 20](https://go.dev/tour/methods/20).
+The reading for this exercise goes from [the basics](https://go.dev/tour/basics/1)
+to [methods and interfaces, page 20](https://go.dev/tour/methods/20).
+These are some of the main points to remember:
 
 - Basics: packages, imports, exported names, functions, variables, and types.
 - Flow control: `for`, `if`, `switch`, and `defer`.
@@ -57,43 +59,25 @@ The assigned reading is [A Tour of Go](https://go.dev/tour/basics/1), through
 
 ## Part 1 - Development environment
 
-GitHub is set up and this repository is a fork of `ddibiasi/sbd-ais-ws26`.
-Visual Studio Code is installed on the Windows machine.
+I already have a GitHub account and forked `ddibiasi/sbd-ais-ws26`.
+I also have Visual Studio Code installed on my Windows computer.
 
-Go and swaggo were installed in a local workspace tool directory for
-validation. This is a portable setup; it does not add them to the system PATH.
-For a regular development installation, install Go from
-[go.dev](https://go.dev/dl/), then install the swaggo CLI:
+For now, Go and swaggo are installed in a local folder for running and
+checking the program. They have not been added to my system PATH yet.
+To finish the regular setup, I still need to install Go from
+[go.dev](https://go.dev/dl/) and make the swaggo CLI available with:
 
 ```sh
 go install github.com/swaggo/swag/cmd/swag@v1.16.6
 ```
 
-Add Go's `bin` directory and `$(go env GOPATH)/bin` to PATH, then check:
+After adding Go's `bin` folder and `$(go env GOPATH)/bin` to PATH, I can check
+the installation with:
 
 ```sh
 go version
 swag --version
 ```
 
-Swaggo is a setup requirement for later API work. This hello world program
-does not need generated Swagger documentation.
-
-### Docker setup still to complete
-
-Docker Engine and an Ubuntu VM are not installed on the Windows machine.
-The Docker check has therefore **not** been run.
-
-1. Set up an Ubuntu VM using the
-   [Ubuntu VirtualBox guide](https://ubuntu.com/tutorials/how-to-run-ubuntu-desktop-on-a-virtual-machine-using-virtualbox#1-overview).
-2. Inside Ubuntu, follow the official
-   [Docker Engine installation instructions](https://docs.docker.com/engine/install/ubuntu/).
-3. Verify the installation inside Ubuntu:
-
-   ```sh
-   sudo docker run hello-world
-   ```
-
-   Docker should print `Hello from Docker!`. After configuring non-root Docker
-   access according to the official instructions, the exercise's exact command
-   is `docker run hello-world`.
+Swaggo will be needed for the API exercises later on. I do not need to
+generate Swagger documentation for this hello world program.
