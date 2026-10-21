@@ -1,0 +1,35 @@
+Pager usage is off.
+Timing is on.
+psql:C:/Users/Daniel/.codex/.chatgpt-projects/g-p-6acfd97b13b8819196aea3355e899837/tmp/exc2-setup-local.sql:6: NOTICE:  table "people_50k" does not exist, skipping
+psql:C:/Users/Daniel/.codex/.chatgpt-projects/g-p-6acfd97b13b8819196aea3355e899837/tmp/exc2-setup-local.sql:6: NOTICE:  table "people_100k" does not exist, skipping
+psql:C:/Users/Daniel/.codex/.chatgpt-projects/g-p-6acfd97b13b8819196aea3355e899837/tmp/exc2-setup-local.sql:6: NOTICE:  table "people_200k" does not exist, skipping
+DROP TABLE
+Time: 0,529 ms
+psql:C:/Users/Daniel/.codex/.chatgpt-projects/g-p-6acfd97b13b8819196aea3355e899837/tmp/exc2-setup-local.sql:7: NOTICE:  table "people_big" does not exist, skipping
+psql:C:/Users/Daniel/.codex/.chatgpt-projects/g-p-6acfd97b13b8819196aea3355e899837/tmp/exc2-setup-local.sql:7: NOTICE:  table "orders" does not exist, skipping
+DROP TABLE
+Time: 0,400 ms
+CREATE TABLE
+Time: 7,724 ms
+COPY 1000000
+Time: 6352,230 ms (00:06,352)
+CREATE TABLE
+Time: 3,737 ms
+COPY 1000000
+Time: 3839,167 ms (00:03,839)
+ANALYZE
+Time: 196,213 ms
+ANALYZE
+Time: 198,362 ms
+ order_count 
+-------------
+     1000000
+(1 row)
+
+Time: 138,848 ms
+ people_count 
+--------------
+      1000000
+(1 row)
+
+Time: 44,141 ms

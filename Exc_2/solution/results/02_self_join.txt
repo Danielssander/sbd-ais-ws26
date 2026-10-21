@@ -1,0 +1,245 @@
+\set ON_ERROR_STOP on
+\pset pager off
+Pager usage is off.
+\timing on
+Timing is on.
+-- Use one query worker to make comparisons easier on a single CPU workload.
+SET max_parallel_workers_per_gather = 0;
+SET
+Time: 0,153 ms
+SET jit = off;
+SET
+Time: 0,096 ms
+SET statement_timeout = '5min';
+SET
+Time: 0,067 ms
+SELECT version();
+                                 version                                 
+-------------------------------------------------------------------------
+ PostgreSQL 18.1 on x86_64-windows, compiled by msvc-19.44.35219, 64-bit
+(1 row)
+
+Time: 0,308 ms
+SHOW max_parallel_workers_per_gather;
+ max_parallel_workers_per_gather 
+---------------------------------
+ 0
+(1 row)
+
+Time: 0,080 ms
+SHOW jit;
+ jit 
+-----
+ off
+(1 row)
+
+Time: 0,056 ms
+SHOW work_mem;
+ work_mem 
+----------
+ 4MB
+(1 row)
+
+Time: 0,048 ms
+SHOW shared_buffers;
+ shared_buffers 
+----------------
+ 128MB
+(1 row)
+
+Time: 0,047 ms
+DROP TABLE IF EXISTS people_50k, people_100k, people_200k;
+psql:C:/Users/Daniel/.codex/.chatgpt-projects/g-p-6acfd97b13b8819196aea3355e899837/homework-repo/Exc_2/solution/02_self_join.sql:16: NOTICE:  table "people_50k" does not exist, skipping
+psql:C:/Users/Daniel/.codex/.chatgpt-projects/g-p-6acfd97b13b8819196aea3355e899837/homework-repo/Exc_2/solution/02_self_join.sql:16: NOTICE:  table "people_100k" does not exist, skipping
+psql:C:/Users/Daniel/.codex/.chatgpt-projects/g-p-6acfd97b13b8819196aea3355e899837/homework-repo/Exc_2/solution/02_self_join.sql:16: NOTICE:  table "people_200k" does not exist, skipping
+DROP TABLE
+Time: 0,232 ms
+CREATE TABLE people_50k AS SELECT * FROM people_big WHERE id <= 50000;
+SELECT 50000
+Time: 70,131 ms
+CREATE TABLE people_100k AS SELECT * FROM people_big WHERE id <= 100000;
+SELECT 100000
+Time: 215,360 ms
+CREATE TABLE people_200k AS SELECT * FROM people_big WHERE id <= 200000;
+SELECT 200000
+Time: 396,702 ms
+-- Give the planner statistics both before and after adding an index.
+ANALYZE people_50k;
+ANALYZE
+Time: 74,040 ms
+ANALYZE people_100k;
+ANALYZE
+Time: 79,627 ms
+ANALYZE people_200k;
+ANALYZE
+Time: 90,376 ms
+\echo Step 1 - 50,000 rows
+Step 1 - 50,000 rows
+SELECT COUNT(*) AS matching_pairs
+FROM people_50k p1 JOIN people_50k p2 ON p1.country = p2.country;
+ matching_pairs 
+----------------
+       27501822
+(1 row)
+
+Time: 3081,755 ms (00:03,082)
+\echo Step 1 - 100,000 rows
+Step 1 - 100,000 rows
+SELECT COUNT(*) AS matching_pairs
+FROM people_100k p1 JOIN people_100k p2 ON p1.country = p2.country;
+ matching_pairs 
+----------------
+      109946508
+(1 row)
+
+Time: 12625,911 ms (00:12,626)
+\echo Step 1 - 200,000 rows
+Step 1 - 200,000 rows
+SELECT COUNT(*) AS matching_pairs
+FROM people_200k p1 JOIN people_200k p2 ON p1.country = p2.country;
+ matching_pairs 
+----------------
+      439395606
+(1 row)
+
+Time: 48384,155 ms (00:48,384)
+\echo Step 2 - Plan before the country index
+Step 2 - Plan before the country index
+-- TIMING OFF avoids measuring a clock for every row; total time is still shown.
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF)
+SELECT COUNT(*)
+FROM people_100k p1 JOIN people_100k p2 ON p1.country = p2.country;
+                                                       QUERY PLAN                                                       
+------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=1653163.84..1653163.85 rows=1 width=8) (actual rows=1.00 loops=1)
+   Buffers: shared hit=2048
+   ->  Hash Join  (cost=3274.00..1377565.67 rows=110239267 width=0) (actual rows=109946508.00 loops=1)
+         Hash Cond: (p1.country = p2.country)
+         Buffers: shared hit=2048
+         ->  Seq Scan on people_100k p1  (cost=0.00..2024.00 rows=100000 width=8) (actual rows=100000.00 loops=1)
+               Buffers: shared hit=1024
+         ->  Hash  (cost=2024.00..2024.00 rows=100000 width=8) (actual rows=100000.00 loops=1)
+               Buckets: 131072  Batches: 1  Memory Usage: 4954kB
+               Buffers: shared hit=1024
+               ->  Seq Scan on people_100k p2  (cost=0.00..2024.00 rows=100000 width=8) (actual rows=100000.00 loops=1)
+                     Buffers: shared hit=1024
+ Planning Time: 0.106 ms
+ Execution Time: 14544.395 ms
+(14 rows)
+
+Time: 14544,921 ms (00:14,545)
+CREATE INDEX people_100k_country_idx ON people_100k(country);
+CREATE INDEX
+Time: 81,163 ms
+ANALYZE people_100k;
+ANALYZE
+Time: 77,085 ms
+\echo Step 2 - Repeat after creating the index
+Step 2 - Repeat after creating the index
+SELECT COUNT(*) AS matching_pairs
+FROM people_100k p1 JOIN people_100k p2 ON p1.country = p2.country;
+ matching_pairs 
+----------------
+      109946508
+(1 row)
+
+Time: 5378,597 ms (00:05,379)
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF)
+SELECT COUNT(*)
+FROM people_100k p1 JOIN people_100k p2 ON p1.country = p2.country;
+                                                                       QUERY PLAN                                                                       
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=1638764.93..1638764.94 rows=1 width=8) (actual rows=1.00 loops=1)
+   Buffers: shared hit=61983
+   ->  Nested Loop  (cost=0.30..1363821.71 rows=109977289 width=0) (actual rows=109946508.00 loops=1)
+         Buffers: shared hit=61983
+         ->  Seq Scan on people_100k p1  (cost=0.00..2024.00 rows=100000 width=8) (actual rows=100000.00 loops=1)
+               Buffers: shared hit=1024
+         ->  Memoize  (cost=0.30..19.37 rows=1087 width=8) (actual rows=1099.47 loops=100000)
+               Cache Key: p1.country
+               Cache Mode: logical
+               Hits: 99908  Misses: 92  Evictions: 0  Overflows: 0  Memory Usage: 3937kB
+               Buffers: shared hit=60959
+               ->  Index Only Scan using people_100k_country_idx on people_100k p2  (cost=0.29..19.36 rows=1087 width=8) (actual rows=1086.96 loops=92)
+                     Index Cond: (country = p1.country)
+                     Heap Fetches: 100000
+                     Index Searches: 92
+                     Buffers: shared hit=60959
+ Planning Time: 0.144 ms
+ Execution Time: 8692.599 ms
+(18 rows)
+
+Time: 8693,136 ms (00:08,693)
+\echo Step 3 - Rewrite on 100,000 rows
+Step 3 - Rewrite on 100,000 rows
+SELECT SUM(k * k) AS matching_pairs
+FROM (
+    SELECT country, COUNT(*) AS k
+    FROM people_100k
+    WHERE country IS NOT NULL
+    GROUP BY country
+) country_counts;
+ matching_pairs 
+----------------
+      109946508
+(1 row)
+
+Time: 24,388 ms
+\echo Step 3 - Check equality with the original join
+Step 3 - Check equality with the original join
+SELECT
+    (SELECT COUNT(*)
+     FROM people_100k p1 JOIN people_100k p2 ON p1.country = p2.country)
+    =
+    (SELECT SUM(k * k)
+     FROM (
+         SELECT country, COUNT(*) AS k
+         FROM people_100k
+         WHERE country IS NOT NULL
+         GROUP BY country
+     ) country_counts) AS results_match;
+ results_match 
+---------------
+ t
+(1 row)
+
+Time: 5404,282 ms (00:05,404)
+\echo Step 3 - Rewrite on the full million rows (no full-size join)
+Step 3 - Rewrite on the full million rows (no full-size join)
+SELECT SUM(k * k) AS matching_pairs
+FROM (
+    SELECT country, COUNT(*) AS k
+    FROM people_big
+    WHERE country IS NOT NULL
+    GROUP BY country
+) country_counts;
+ matching_pairs 
+----------------
+    10983941260
+(1 row)
+
+Time: 247,380 ms
+EXPLAIN (ANALYZE, BUFFERS, TIMING OFF)
+SELECT SUM(k * k)
+FROM (
+    SELECT country, COUNT(*) AS k
+    FROM people_big
+    WHERE country IS NOT NULL
+    GROUP BY country
+) country_counts;
+                                                   QUERY PLAN                                                    
+-----------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=24938.30..24938.31 rows=1 width=32) (actual rows=1.00 loops=1)
+   Buffers: shared hit=4280 read=5656
+   ->  HashAggregate  (cost=24936.00..24936.92 rows=92 width=16) (actual rows=92.00 loops=1)
+         Group Key: people_big.country
+         Batches: 1  Memory Usage: 32kB
+         Buffers: shared hit=4280 read=5656
+         ->  Seq Scan on people_big  (cost=0.00..19936.00 rows=1000000 width=8) (actual rows=1000000.00 loops=1)
+               Filter: (country IS NOT NULL)
+               Buffers: shared hit=4280 read=5656
+ Planning Time: 0.079 ms
+ Execution Time: 271.429 ms
+(11 rows)
+
+Time: 271,852 ms
