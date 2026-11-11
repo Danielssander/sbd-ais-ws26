@@ -4,91 +4,120 @@ Daniel Sander-Gassner
 
 ## Stage A - Today's system
 
-### How the tests were run
+### Test setup
 
-These are actual runs of the supplied `plant.py`, `baseline_detector.py`, `model.py` and `services.py`, without modifying those files. I used Python 3.12 and PostgreSQL 16.2 on Linux in a remote environment. PostgreSQL ran directly, rather than in the supplied PostgreSQL 18.1 Docker container. These results demonstrate the supplied algorithm's behaviour in this environment; they do not verify the Windows/Ubuntu VM setup or the Docker configuration.
+For these tests, I used the supplied Python files without changing them. The tests ran remotely on Linux with Python 3.12 and PostgreSQL 16.2. PostgreSQL ran directly, without Docker. This is different from the supplied Docker setup, which uses PostgreSQL 18.1. My new PC's Ubuntu VM setup is still to be done.
 
-I started the detector first, then ran the 20-machine plant for 90 seconds. After the plant finished, I allowed 10 seconds for the detector to drain and checked that its reported backlog was zero. I reset the database tables before the second test, started a fresh detector, and ran the default 60-machine plant for 60 seconds. I stopped that detector immediately after the plant finished.
+I started the detector first in both tests:
 
-Commands, each long-running program in its own terminal:
+- **20 machines:** I ran the plant for 90 seconds, then waited another 10 seconds for the detector to catch up. Its backlog reached zero before I stopped it.
+- **60 machines:** I ran the plant for 60 seconds and stopped the detector just after the plant finished.
+
+I cleared the database tables between tests. These are the commands, with the detector and plant in separate terminals:
 
 ```bash
-# Test 1: start detector first
+# First test: start the detector, then the plant
 python3 baseline_detector.py --quiet
 python3 plant.py --sink postgres --machines 20 --duration 90
 
-# After the plant ends, wait for backlog 0, then stop detector with Ctrl+C.
-# Count rows for this run:
+# Second test: start a new detector, then the plant
+python3 baseline_detector.py --quiet
+python3 plant.py --sink postgres --duration 60
 ```
+
+I compared the detector's count with the number of rows in the database:
 
 ```sql
 SELECT count(*) FROM readings
 WHERE run = (SELECT max(run) FROM readings);
 ```
 
-```bash
-# Test 2: start a fresh detector first
-python3 baseline_detector.py --quiet
-python3 plant.py --sink postgres --duration 60
-# Stop the detector immediately after the plant ends.
-```
+The `--quiet` option only hides individual anomaly messages. The detector still processes the readings and counts anomalies.
 
-`--quiet` only suppresses printing each anomaly; the model still processes and counts them. Both tests kept the default inference cost of 3 ms per reading.
+### A1 - 20 machines
 
-### A1 - Why readings go missing at 20 machines
-
-| Measurement | 20-machine test |
+| Result | Value |
 |---|---:|
-| Readings sent / rows stored | 18,000 / 18,000 |
-| Readings processed | 14,962 |
-| Stored but never processed after draining | 3,038 |
+| Readings sent | 18,000 |
+| Readings stored in PostgreSQL | 18,000 |
+| Readings processed by the detector | 14,962 |
+| Readings skipped | 3,038 |
 | Model's missing counter | 3,038 |
 | Final reported backlog | 0 |
-| Live reported delay | 0.1-0.3 s |
+| Delay shown while running | 0.1-0.3 seconds |
 
+The detector was fast enough, but it still missed **3,038 readings**. These readings were in the database, because all 18,000 readings were stored.
 
-The skipped readings are in the database. The detector remembers the highest ID it has processed and queries only `WHERE id > last_id`. IDs are allocated during INSERT, but rows become visible to other connections only after COMMIT. The four gateways commit independently.
+The problem is how the detector remembers its position. It saves the highest ID it has read and only asks for larger IDs next time. However, a reading gets its ID before its transaction is committed. COMMIT is the point when other connections can see the reading.
 
-In the example from the assignment:
+Using the example from the assignment:
 
-1. Gateway 1 inserts IDs 100-114 but does not commit yet.
-2. Gateway 2 inserts IDs 115-129 and commits immediately.
-3. The detector polls, sees 115-129 and advances `last_id` to 129.
-4. Gateway 1 commits. Its rows now exist, but their IDs are below 129, so later polls never return them.
+1. Gateway 1 inserts rows with IDs 100-114 but waits before committing.
+2. Gateway 2 inserts rows with IDs 115-129 and commits first.
+3. The detector sees IDs 115-129 and saves 129 as its last ID.
+4. Gateway 1 commits later. The detector skips IDs 100-114 because it now only asks for IDs above 129.
 
-Therefore, ID allocation order is not commit order. The detector can keep up with the incoming rate and still miss rows. A zero backlog does not establish completeness: the displayed backlog is `max(id) - last_id`, not a count of all unprocessed readings. Comparing the table count with the detector's processed count exposes the loss.
+So the order of the IDs is not always the order in which rows become visible. This explains why the detector can miss readings even when it keeps up.
 
-### A2 - What changes at the full rate
+The displayed backlog was zero at the end, but that did not mean everything had been processed. The program calculates backlog as `max(id) - last_id`, so it does not include rows it already skipped.
 
-The 60-machine run stored **36,000 readings**. When stopped, the detector had processed **18,588**, with a missing counter of **37**. During production, the printed delay rose from **2.1 s to 27.5 s**, and the reported backlog rose from **1,200 to 16,460**. These are live log samples, not the final SQL queue size or a p95 measurement.
+### A2 - 60 machines
 
-The remaining 36,000 - 18,588 = **17,412** readings were unprocessed at shutdown; that number includes outstanding work and skipped readings, so it must not be called permanent loss. The missing counter only counts sequence gaps after a machine's first observed reading; it does not count an unseen initial prefix or a still-unread suffix. No anomalies had been detected by shutdown: the detector was still processing data from before the fault at plant time 40 s.
+| Result | Value |
+|---|---:|
+| Readings sent and stored | 36,000 |
+| Readings processed before stopping | 18,588 |
+| Model's missing counter | 37 |
+| Delay shown while running | Increased from 2.1 to 27.5 seconds |
+| Backlog shown while running | Increased from 1,200 to 16,460 |
 
+At the full rate, the plant sends **60 x 10 = 600 readings per second**. Each model calculation takes 3 ms, so one detector can process at most about **1 / 0.003 = 333 readings per second**, even before other work is included.
 
-The full plant produces 60 x 10 = **600 readings/s**. With 3 ms per score, one sequential detector can handle at most about **333 readings/s**, before database and Python overhead. The incoming work exceeds its capacity, so backlog and reading age grow while the plant is running. Growing delay puts the 5-second freshness requirement at risk; the printed delay is a sample, not a measured p95 latency.
+More readings arrive than the detector can process. The queue grows, and the detector works on older and older readings. This explains the increasing backlog and delay. The delay went above 5 seconds. These printed values are individual delay measurements; I did not calculate p95, which is the delay that 95% of results must stay below.
 
-The commit-order bug still exists, but the missing counter need not grow at the same rate as in the small test. When the detector falls behind, previously uncommitted batches have more time to commit before it reaches their IDs. Therefore, a small missing counter in the overloaded test would not mean the polling algorithm is safe. Missing readings and overload are separate problems. Stopping the plant lets the backlog drain, so the important observations are those taken while it is still producing.
+There were **36,000 - 18,588 = 17,412** readings left unprocessed when I stopped the detector. I cannot call all of them lost, because many were still waiting to be processed.
 
-## Stage B - My decision record
+The missing counter only reached 37. This does not mean the ID problem was fixed. Because the detector was behind, the gateways usually had time to commit before it reached their rows. Also, the counter only detects gaps between readings it has seen, not readings before the first one or after the last one.
 
-I choose Kafka for sensor readings and keep PostgreSQL as the system of record for the machine registry.
+No anomalies were detected before I stopped the test. The detector was still working on readings from before the fault started at 40 seconds. I checked the delay while the plant was running, because stopping the plant gives the detector time to catch up and hides the overload problem.
 
-| Requirement | PostgreSQL with improved polling | Kafka |
+## Stage B - My decision
+
+I would send the sensor readings to **Kafka** and keep **PostgreSQL for the machine registry**.
+
+| Requirement | Improve PostgreSQL polling | Use Kafka |
 |---|---|---|
-| R1: scale | Several pollers owning different machines can increase processing capacity. Inserts and polling still load the database; 100,000 readings/s needs benchmarking. | Partitions distribute readings across detectors. Broker capacity and partition balance still need testing at 100,000 readings/s. |
-| R2: complete and ordered | Needs a correct protocol, e.g. per-machine sequence checkpoints and retrying gaps. More pollers do not fix the global-ID bug. | Key by machine_id, preserve producer order and process partitions sequentially within one detector group. Recover model state consistently with offsets and deduplicate retries. |
-| R3: p95 delay <= 5 s | Possible at low load with sufficient workers; polling and database contention add delay. | Possible with enough workers and low lag; Kafka itself does not guarantee the target. Measure p95 at full load. |
-| R4: independent consumers | Extra readers add PostgreSQL load, failing R4 as written. | Detector, archive and dashboard use separate groups and offsets without reading sensor data from PostgreSQL. Provision shared broker resources adequately. |
+| R1: Handle 600, later 100,000 readings/s | I could split machines between several detectors. The database would still handle all inserts and polling queries. I would need to test the larger rate. | I could split the stream into partitions and add detectors. I would still need to test whether the Kafka servers and detectors can handle the larger rate. |
+| R2: Process every reading in order | I would need to track each machine's sequence and retry gaps. Adding more detectors alone does not fix the ID problem. | I would use machine_id as the key so one machine's readings stay in one partition. One detector in the group processes that partition in order. Retries must not cause a reading to be scored twice. |
+| R3: Keep p95 delay at most 5 seconds | This could work at a low rate, but polling and database load add delay. Enough detectors would still be needed. | Enough detectors could keep the delay low, but I would need to measure it under full load. Kafka alone does not make the model faster. |
+| R4: Independent archive and dashboard | Each extra reader would query PostgreSQL and add database load, so this does not meet R4. | I would give the detector, archive and dashboard separate consumer groups. Each group reads at its own position without querying PostgreSQL for sensor readings. Kafka still needs enough capacity for all three. |
 
-**Numbers:** one reading costs 0.003 s, giving an ideal ceiling of 333.3 readings/s per sequential detector. For 600 readings/s, ceil(600 x 0.003) = **2 detectors** is the theoretical minimum. For 100,000 readings/s, the arithmetic gives **300 detector-equivalents**, but that means 100% utilisation: at least **301** would be needed even under ideal balance to stay below saturation. Real workloads need more headroom. At a starting target of 70% utilisation, ceil(rate x 0.003 / 0.7) gives **3 and 429 detectors**, respectively; validate these budgets by measurement. Use at least as many partitions as active detectors and check key distribution.
+### Number of detectors
 
-I would use idempotent production with reliable acknowledgements, retained readings for replay, and a separate anomalies topic. Rebalances require model-state restoration or sufficient replay to rebuild the per-machine warm-up/window state; offsets alone cannot restore it.
+One detector needs **0.003 seconds per reading**:
 
-There is no universal tipping point. One temperature reading per minute is easily served by correct database polling. This model approaches one worker's ceiling around 300 readings/s and needs parallelism at 600. Kafka is justified here by the combination of rate, ordered replay and independent readers, especially R4; this is not a claim that PostgreSQL cannot sustain a particular insert rate.
+| Rate | Calculation | Minimum based on model time |
+|---|---|---|
+| 600 readings/s | 600 x 0.003 = 1.8 seconds of work per second | 2 detectors |
+| 100,000 readings/s | 100,000 x 0.003 = 300 seconds of work per second | 300 detectors, fully busy |
 
-## Run evidence
+At 100,000 readings/s, 300 detectors would have no spare time at all. Even under ideal conditions, I would need at least 301 to stay below full capacity, and more in practice for database calls, Kafka communication and uneven workloads.
 
-The database tables were reset between tests. The count results below also record minimum sequence, maximum sequence and distinct machines. No protected source file was changed and no solution code read ground_truth.jsonl. Stage C was not attempted.
+As a starting estimate, I would aim for around **70% usage**. Rounding up `rate x 0.003 / 0.7` gives **3 detectors for 600 readings/s** and **429 for 100,000 readings/s**. These are planning estimates, not tested guarantees. I would create at least as many partitions as active detectors and check that work is spread evenly.
+
+The model remembers information about each machine. If a partition moves to another detector, that detector must restore the saved model state or replay enough readings to rebuild it. Saving the Kafka reading position alone is not enough.
+
+I would also keep readings in Kafka for replay, wait for confirmation that writes succeeded, and enable the producer's duplicate protection when retrying. Anomalies would go to their own topic.
+
+### When is Kafka worth using?
+
+For an office sending one temperature reading per minute, I would keep PostgreSQL with correct polling. It is simpler and the workload is small.
+
+There is no single rate where every system must switch to Kafka. For this model, one detector gets close to its limit around 300 readings/s, and 600 already needs several detectors. I choose Kafka here because I need ordered readings, replay and several independent readers, especially the archive and dashboard. The decision is about these requirements together, not just how many rows PostgreSQL can insert.
+
+## Test logs
+
+The original logs are below. I reset the database tables between tests. The database results show the row count, lowest sequence, highest sequence and number of machines. I did not change the protected Python files or use `ground_truth.jsonl` in solution code.
 
 <details>
 <summary>database_20.txt</summary>
